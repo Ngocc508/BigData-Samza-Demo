@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Samza Order Analytics Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar cinematic-panel">
+        <div class="brand-stack">
+          <p class="eyebrow">Luồng dữ liệu thời gian thực</p>
+          <h1>Samza Order Analytics</h1>
+          <div class="brand-row">
+            <span class="brand-pill">Kafka + Samza</span>
+            <span class="brand-pill muted">Customer Preview</span>
+          </div>
+        </div>
+        <div class="status-cluster">
+          <div class="incident-badge hidden" id="live-incident">Sự cố trực tiếp</div>
+          <div class="status-pill" id="status-pill">Đang kiểm tra...</div>
+          <button class="presentation-toggle" id="presentation-toggle" type="button" aria-label="Toggle presentation mode">Toàn màn hình</button>
+        </div>
+      </header>
+
+      <section class="hero-section cinematic-panel">
+        <div class="hero-banner">
+          <div class="brand-crest" aria-label="Brand mark">
+            <span>S</span>
+          </div>
+          <div class="hero-copy">
+            <p class="eyebrow">Mission control</p>
+            <h2>Streaming risk intelligence</h2>
+            <p class="hero-description">Giám sát đơn hàng, phát hiện hành vi bất thường và cảnh báo rủi ro theo thời gian thực trên luồng sự kiện đang chạy.</p>
+          </div>
+        </div>
+        <div class="hero-meta">
+          <div class="mini-kpi">
+            <span>Trạng thái trực tiếp</span>
+            <strong id="hero-state">Đang giám sát</strong>
+          </div>
+          <div class="mini-kpi accent">
+            <span>Mức độ rủi ro</span>
+            <strong id="hero-risk">Ổn định</strong>
+          </div>
+        </div>
+        <div class="hero-timeline" id="incident-timeline">
+          <div class="timeline-item neutral">
+            <span class="timeline-dot"></span>
+            <div>
+              <strong>Hệ thống sẵn sàng</strong>
+              <small>Đang chờ luồng dữ liệu trực tiếp</small>
+            </div>
+          </div>
+          <div class="timeline-item info">
+            <span class="timeline-dot"></span>
+            <div>
+              <strong>Kafka broker đang hoạt động</strong>
+              <small>Luồng đơn hàng ổn định · 12:30</small>
+            </div>
+          </div>
+          <div class="timeline-item warning">
+            <span class="timeline-dot"></span>
+            <div>
+              <strong>Phát hiện bất thường về tốc độ</strong>
+              <small>Nhóm người dùng tăng nhảy vọt · 12:31</small>
+            </div>
+          </div>
+          <div class="timeline-item critical">
+            <span class="timeline-dot"></span>
+            <div>
+              <strong>Đã kích hoạt cảnh báo</strong>
+              <small>Hệ thống phát hiện nhiều đơn hàng đáng ngờ · 12:32</small>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="stats-grid">
+        <div class="stat-card accent-blue">
+          <div class="stat-icon">↗</div>
+          <span class="label">Thông lượng</span>
+          <strong id="throughput">0.00</strong>
+          <small>msg/s</small>
+        </div>
+        <div class="stat-card accent-green">
+          <div class="stat-icon">◎</div>
+          <span class="label">Sự kiện đơn hàng</span>
+          <strong id="total-orders">0</strong>
+          <small>luồng gần đây</small>
+        </div>
+        <div class="stat-card accent-red">
+          <div class="stat-icon">!</div>
+          <span class="label">Cảnh báo</span>
+          <strong id="total-alerts">0</strong>
+          <small>đã phát sinh</small>
+        </div>
+        <div class="stat-card accent-purple">
+          <div class="stat-icon">◆</div>
+          <span class="label">Người dùng</span>
+          <strong id="unique-users">0</strong>
+          <small>đang hoạt động</small>
+        </div>
+      </section>
+
+      <section class="chart-panel panel cinematic-panel">
+        <div class="panel-header">
+          <h2>Xu hướng đơn hàng vs cảnh báo</h2>
+          <span class="badge">30 mẫu gần nhất</span>
+        </div>
+        <div class="alert-progress-wrap">
+          <div class="alert-progress-meta">
+            <span>Tải cảnh báo</span>
+            <strong id="alert-load-text">0%</strong>
+          </div>
+          <div class="alert-progress-bar">
+            <span id="alert-progress-fill"></span>
+          </div>
+        </div>
+        <div class="severity-banner hidden" id="severity-banner">Mức độ sự cố: Bình thường</div>
+        <canvas id="trendChart" height="150"></canvas>
+      </section>
+
+      <section class="summary-grid">
+        <div class="mini-panel panel slide-in">
+          <div class="panel-header">
+            <h3>Top người dùng</h3>
+          </div>
+          <ul id="top-users" class="metric-list"></ul>
+        </div>
+        <div class="mini-panel panel slide-in">
+          <div class="panel-header">
+            <h3>Loại cảnh báo</h3>
+          </div>
+          <ul id="top-rules" class="metric-list"></ul>
+        </div>
+      </section>
+
+      <section class="summary-grid">
+        <div class="mini-panel panel heat-panel slide-in">
+          <div class="panel-header">
+            <h3>Heatmap cảnh báo theo người dùng</h3>
+          </div>
+          <div id="user-heatmap" class="heatmap-grid"></div>
+        </div>
+        <div class="mini-panel panel system-panel slide-in">
+          <div class="panel-header">
+            <h3>Hệ thống</h3>
+          </div>
+          <div id="system-health" class="health-list"></div>
+        </div>
+      </section>
+
+      <section class="panel-grid">
+        <div class="panel cinematic-panel">
+          <div class="panel-header">
+            <h2>Sự kiện đơn hàng gần đây</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Thời gian</th>
+                  <th>Người dùng</th>
+                  <th>Hành động</th>
+                  <th>Số tiền</th>
+                </tr>
+              </thead>
+              <tbody id="orders-body">
+                <tr><td colspan="4">Đang chờ dữ liệu...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel cinematic-panel">
+          <div class="panel-header">
+            <h2>Cảnh báo gần đây</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Thời gian</th>
+                  <th>Người dùng</th>
+                  <th>Quy tắc</th>
+                  <th>Mức độ</th>
+                </tr>
+              </thead>
+              <tbody id="alerts-body">
+                <tr><td colspan="4">Đang chờ dữ liệu...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="demo-footer">
+      <div class="footer-brand">
+        <span class="brand-pill">Big Data</span>
+        <strong>Samza + Kafka Streaming Analytics</strong>
+      </div>
+      <div class="footer-meta">
+        <span>Chế độ trình chiếu</span>
+        <span>Customer Preview</span>
+      </div>
+    </footer>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

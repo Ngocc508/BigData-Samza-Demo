@@ -1,0 +1,205 @@
+SAMZA ORDER ANALYTICS DEMO - MÔ TẢ CHI TIẾT
+
+1. Mục tiêu dự án
+Dự án này là một hệ thống xử lý dữ liệu theo luồng (stream processing) bằng Samza + Kafka.
+
+Nó làm 3 việc chính:
+- nhận sự kiện đơn hàng từ Kafka
+- lưu trạng thái theo từng user trong RocksDB
+- phát cảnh báo nếu người dùng có hành vi bất thường
+
+2. Cấu trúc chính của dự án
+
+pom.xml
+- file cấu hình Maven
+- khai báo dependency của Samza, Kafka, Jackson
+- định nghĩa Java version, plugin shade để đóng gói jar
+
+src/main/java/vn/edu/app/OrderAnalyticsJob.java
+- file khởi tạo job Samza
+- cấu hình Kafka, input topic, output topic, store
+- gọi JobRunner để chạy job
+
+src/main/java/vn/edu/task/OrderAnalyticsTask.java
+- file xử lý sự kiện thực tế
+- đọc từng message từ Kafka
+- cập nhật state
+- kiểm tra rule
+- phát alert
+
+src/main/java/vn/edu/model/OrderEvent.java
+- model dữ liệu đầu vào
+- chứa thông tin như eventId, userId, itemId, actionType, amount, timestamp, sequenceNo
+
+src/main/java/vn/edu/model/AlertEvent.java
+- model dữ liệu cảnh báo ra khỏi hệ thống
+- chứa alertId, userId, ruleCode, severity, observedValue, threshold...
+
+src/main/java/vn/edu/model/UserState.java
+- lưu trạng thái của từng user
+- gồm cửa sổ sự kiện 30s, số lượt event, số order, tổng tiền, pay fail liên tiếp, timestamp...
+
+src/main/java/vn/edu/serde/JsonSerde.java
+- chuyển Java object <-> byte[] để lưu và gửi qua Kafka
+
+src/main/java/vn/edu/serde/JsonSerdeFactory.java
+- tạo serde cho từng loại dữ liệu như order-event, alert-event, user-state
+
+load-generator/producer.py
+- script giả lập dữ liệu
+- phát event ngẫu nhiên vào Kafka topic order-events
+
+scripts/start-demo.sh
+- khởi động đầy đủ: ZooKeeper, Kafka, producer, Samza job
+
+scripts/stop-demo.sh
+- dừng toàn bộ hệ thống
+
+scripts/monitor-logs.sh
+- theo dõi log của Kafka, producer, Samza theo thời gian thực
+
+scripts/check-throughput.sh
+- đo lượng message / giây từ Kafka topic
+
+3. Luồng hoạt động như thế nào
+
+Bước 1: Producer tạo dữ liệu
+File load-generator/producer.py sinh ra các event JSON như:
+{
+  "eventId": "...",
+  "userId": "user-00045",
+  "itemId": "item-0421",
+  "actionType": "ADD_TO_CART",
+  "amount": 0,
+  "timestamp": 123456789,
+  "sequenceNo": 1
+}
+
+Đây là dữ liệu đơn hàng hoặc hành vi người dùng.
+
+Bước 2: Dữ liệu đi vào Kafka
+Producer gửi event vào Kafka topic:
+- order-events
+
+Kafka đóng vai trò là nơi lưu trữ stream dữ liệu tạm thời và phân phối cho consumer.
+
+Bước 3: Samza job đọc stream
+OrderAnalyticsJob cấu hình Samza để đọc:
+- task.inputs = kafka.order-events
+
+Nghĩa là Samza sẽ lắng nghe topic order-events.
+
+Bước 4: Task xử lý từng event
+OrderAnalyticsTask.process(...) làm các việc sau:
+- nhận message từ Kafka
+- nếu là byte[] thì deserialize JSON thành OrderEvent
+- lấy userId
+- kiểm tra state của user trong store
+- cập nhật trạng thái theo 30s window
+- tăng số event, order, pay fail
+- nếu đủ điều kiện thì gọi evaluateRules()
+
+Bước 5: Hệ thống tính rule
+Các rule chính trong code là:
+- nếu user có nhiều CHECKOUT trong 30s -> HIGH_ORDER_RATE
+- nếu user có nhiều PAY_FAIL liên tiếp >= 3 -> CONSECUTIVE_PAYMENT_FAILURE
+
+Bước 6: Chuyển cảnh báo ra Kafka
+Khi rule thỏa, task tạo AlertEvent và gửi vào topic:
+- alert-events
+
+Ví dụ alert JSON:
+{
+  "alertId": "...",
+  "userId": "user-00075",
+  "ruleCode": "CONSECUTIVE_PAYMENT_FAILURE",
+  "severity": "CRITICAL",
+  "observedValue": 3,
+  "threshold": 3,
+  "triggerEventId": "...",
+  "createdAt": 123456789
+}
+
+4. Ý nghĩa của UserState
+UserState là trạng thái theo từng user. Nó lưu:
+- cửa sổ event trong 30 giây
+- số event trong 30s
+- số order trong 30s
+- tổng tiền checkout thành công
+- số lần pay fail liên tiếp
+- thời điểm event cuối cùng
+- thời gian alert cuối cùng
+
+Vì vậy, mỗi user không cần phải lưu toàn bộ lịch sử dài hạn, chỉ lưu trạng thái cần thiết để đánh giá rule.
+
+5. Tại sao cần RocksDB
+Samza dùng store để lưu state giữa các message.
+RocksDB giúp:
+- lưu state lâu dài hơn memory
+- phục vụ tính toán stateful trong stream processing
+- cho phép job xử lý liên tục theo user
+
+6. Tại sao cần serde
+Kafka chỉ biết byte[] không biết Java object.
+Vì vậy phải convert:
+- Java object -> bytes khi ghi ra Kafka
+- bytes -> Java object khi đọc từ Kafka
+
+Đây là trách nhiệm của JsonSerde.
+
+7. Luồng vận hành demo khi chạy script
+Khi chạy ./scripts/start-demo.sh, nó làm như sau:
+- build project nếu chưa có jar
+- start ZooKeeper
+- start Kafka
+- tạo topic
+- tạo venv Python
+- install kafka-python
+- start producer.py
+- start Samza app
+
+Sau đó, bạn có thể xem log bằng:
+./scripts/monitor-logs.sh
+
+Hoặc đo lưu lượng bằng:
+./scripts/check-throughput.sh order-events 10
+
+8. Tại sao script throughput lại tính được
+check-throughput.sh hoạt động như sau:
+- lấy offset hiện tại của topic
+- chờ 10s
+- lấy offset lần hai
+- tính chênh lệch = số message mới
+- chia cho khoảng thời gian
+- in ra msg/s
+
+Ví dụ:
+- offset start = 1000
+- offset end = 1034
+- khoảng thời gian = 5s
+- throughput = (1034 - 1000) / 5 = 6.8 msg/s
+
+9. Kết luận
+Dự án này là một ví dụ điển hình của stream processing với Kafka + Samza.
+Noi dung quan trọng là:
+- producer đẩy dữ liệu vào Kafka
+- Samza xử lý từng event và cập nhật state
+- nếu rule match thì gửi cảnh báo ra topic alert-events
+- script giúp monitor và đo throughput
+
+10. Cách đọc project hiệu quả
+Nếu muốn hiểu dự án, hãy đọc theo thứ tự:
+1. OrderAnalyticsJob.java
+2. OrderAnalyticsTask.java
+3. UserState.java
+4. OrderEvent.java / AlertEvent.java
+5. JsonSerde.java
+6. producer.py
+7. scripts/*.sh
+
+Đây là thứ tự hợp lý nhất để hiểu hệ thống từ đầu vào đến đầu ra.
+
+11. Tóm tắt ngắn gọn
+Producer -> Kafka -> Samza -> State Store -> Alert -> Kafka
+
+Hệ thống này không phải “xử lý batch”, mà “xử lý stream liên tục theo event”.
